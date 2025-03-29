@@ -1,0 +1,5 @@
+*.yaml
+**/__pycache/
+.DS_Store
+.ruff_cache
+.env
