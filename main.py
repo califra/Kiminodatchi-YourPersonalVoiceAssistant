@@ -3,7 +3,8 @@ import io
 import os
 import time
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 import noisereduce as nr  # Optional noise reduction
 import numpy as np
 import pyaudio
@@ -20,6 +21,7 @@ SILENCE_DURATION = 2  # Stop transcription after 3 seconds of silence
 MODEL_SIZE = "base"
 SILENCE_THRESHOLD = 0.01
 
+
 def is_silent(audio_data, threshold=SILENCE_THRESHOLD):
     """Check if the audio is silent based on RMS energy."""
     energy = np.sqrt(np.mean(np.square(audio_data)))
@@ -32,10 +34,15 @@ stt_model = whisper.load_model(MODEL_SIZE)
 
 load_dotenv()
 api_key = os.getenv("GEMINI_API_KEY")
-genai.configure(api_key=api_key)
+client = genai.Client(api_key=api_key)
 
 # Load the LLM for the chat
-LLM = genai.GenerativeModel(model_name="gemini-1.5-flash")
+model_instructions = """You are a helpful AI. 
+    Keep responses concise but not too short.
+    Avoid unnecessary explanations or questions."""
+chat_config = types.GenerateContentConfig(system_instruction=model_instructions)
+LLM_chat = client.chats.create(model="gemini-2.0-flash", config=chat_config, history=[])
+
 
 def live_transcription(sample_rate=RATE, chunk_size=CHUNK):
     f"""
@@ -98,6 +105,7 @@ def live_transcription(sample_rate=RATE, chunk_size=CHUNK):
         audio_interface.terminate()
     return transcription_text
 
+
 def google_translate_tts(text):
     """Automatically detects language and plays speech directly from memory without saving."""
     if not text.strip():
@@ -119,19 +127,8 @@ def google_translate_tts(text):
         audio = AudioSegment.from_file(audio_fp, format="mp3")
         play(audio)
     except Exception as e:
-        print(f"❌ Error in TTS: {e}")
+        print(f"Error in TTS: {e}")
 
-
-chat = LLM.start_chat(
-    history=[
-        {
-            "role": "user",
-            "parts": [
-                "You are a helpful AI. Keep responses concise but not too short but avoid unnecessary explanations or questions."
-            ],
-        }
-    ]
-)
 
 while True:
     try:
@@ -139,7 +136,7 @@ while True:
         # Ensure that the transcription text is not empty before sending it to the LLM
         if transcription_text != "" and transcription_text != "INTERRUPT":
             print(f"User: {transcription_text}")
-            llm_response = chat.send_message(transcription_text).text
+            llm_response = LLM_chat.send_message(transcription_text).text
             google_translate_tts(llm_response)
             print("AI:", llm_response)
         else:
