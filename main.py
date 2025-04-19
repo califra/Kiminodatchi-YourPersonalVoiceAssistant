@@ -17,7 +17,7 @@ from pydub.playback import play
 
 RATE = 16000  # Whisper expects 16kHz
 CHUNK = 4096
-SILENCE_DURATION = 2  # Stop transcription after 3 seconds of silence
+SILENCE_DURATION = 3  # Stop transcription after 3 seconds of silence
 MODEL_SIZE = "base"
 SILENCE_THRESHOLD = 0.01
 
