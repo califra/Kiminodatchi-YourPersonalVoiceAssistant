@@ -1,4 +1,4 @@
-import pdb;
+import pdb
 from fastapi import FastAPI, BackgroundTasks, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 
@@ -131,7 +131,9 @@ def live_transcription(sample_rate=RATE, chunk_size=CHUNK):
         stream.close()
         audio_interface.terminate()
 
+
 import wave
+
 
 def save_temp_wav(audio_bytes: bytes, sample_rate: int = 16000):
     with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
@@ -268,7 +270,7 @@ async def websocket_audio(websocket: WebSocket):
             return
 
         print(f"User: {transcription_text}")
-        
+
         await websocket.send_text(f"User: {transcription_text}")
 
         llm_response = LLM_chat.send_message(transcription_text).text
