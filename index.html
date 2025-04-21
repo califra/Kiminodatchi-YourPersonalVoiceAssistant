@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Tomodatchi Desu</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 30px;
+    }
+    #chat {
+      border: 1px solid #ccc;
+      padding: 10px;
+      height: 300px;
+      overflow-y: scroll;
+      margin-bottom: 20px;
+    }
+    button {
+      font-size: 18px;
+      padding: 10px 20px;
+      margin-right: 10px;
+    }
+    #micStatus {
+      font-weight: bold;
+      margin-bottom: 10px;
+      display: inline-block;
+    }
+    .green { color: green; }
+    .red { color: red; }
+    .gray { color: gray; }
+  </style>
+</head>
+<body>
+  <h1>Tomodatchi Desu</h1>
+  <div id="status">
+    <span id="micStatus" class="gray">🎤 Awaiting permission...</span>
+  </div>
+  <div id="chat"></div>
+  <canvas id="waveform" width="600" height="100" style="border:1px solid #ccc; margin-bottom: 20px;"></canvas>
+  <button id="startBtn">🎙️ Start Talking</button>
+  <button id="stopBtn" style="display: none;">⏹️ Stop Conversation</button>
+
+  <script>
+    const startBtn = document.getElementById("startBtn");
+    const stopBtn = document.getElementById("stopBtn");
+    const chatDiv = document.getElementById("chat");
+    const micStatus = document.getElementById("micStatus");
+
+    let silenceTimer = null;
+    let sharedStream = null;
+    let conversationActive = false;
+
+    let analyser, dataArray, bufferLength;
+
+    const canvas = document.getElementById("waveform");
+    const canvasCtx = canvas.getContext("2d");
+
+    function updateMicStatus(state) {
+      micStatus.className = '';
+      if (state === 'granted') {
+        micStatus.textContent = '🎤 Microphone ready';
+        micStatus.classList.add('green');
+      } else if (state === 'denied') {
+        micStatus.textContent = '❌ Microphone access denied';
+        micStatus.classList.add('red');
+      } else {
+        micStatus.textContent = '🎤 Awaiting permission...';
+        micStatus.classList.add('gray');
+      }
+    }
+
+    async function getOrRequestStream() {
+      if (
+        !sharedStream ||
+        sharedStream.getAudioTracks().length === 0 ||
+        sharedStream.getAudioTracks().every(track => track.readyState === "ended")
+      ) {
+        try {
+          sharedStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+          updateMicStatus('granted');
+        } catch (err) {
+          updateMicStatus('denied');
+          alert("Microphone access is required.");
+          console.error("Mic access error:", err);
+          return null;
+        }
+      }
+      return sharedStream;
+    }
+
+    function appendChat(text) {
+      const p = document.createElement("p");
+      p.textContent = text;
+      chatDiv.appendChild(p);
+      chatDiv.scrollTop = chatDiv.scrollHeight;
+    }
+
+    async function startTalking() {
+      const stream = await getOrRequestStream();
+      if (!stream) return;
+
+      startBtn.disabled = true;
+      stopBtn.style.display = "inline-block";
+      conversationActive = true;
+      appendChat("🔴 Listening...");
+
+      const socket = new WebSocket("ws://localhost:8000/ws/audio");
+      socket.binaryType = "arraybuffer";
+
+      socket.onmessage = (event) => {
+        if (event.data instanceof ArrayBuffer) {
+          const audioBlob = new Blob([event.data], { type: "audio/mpeg" });
+          const audioUrl = URL.createObjectURL(audioBlob);
+          const audio = new Audio(audioUrl);
+          audio.play();
+          appendChat("🟢 AI responded with audio.");
+          audio.onended = () => {
+            if (conversationActive) {
+              setTimeout(() => {
+                startTalking(); // restart listening after playback ends
+              }, 300);
+            }
+          };
+        } else {
+          appendChat(event.data);
+        }
+      };
+
+      socket.onclose = () => {
+        appendChat("🔁 Connection closed.");
+        if (!conversationActive) {
+          startBtn.disabled = false;
+          stopBtn.style.display = "none";
+        }
+      };
+
+      const audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+      await audioContext.resume();
+
+      const source = audioContext.createMediaStreamSource(stream);
+      const processor = audioContext.createScriptProcessor(4096, 1, 1);
+      analyser = audioContext.createAnalyser();
+      analyser.fftSize = 1024;
+      bufferLength = analyser.frequencyBinCount;
+      dataArray = new Uint8Array(bufferLength);
+
+      source.connect(analyser);
+      source.connect(processor);
+      processor.connect(audioContext.destination);
+
+      processor.onaudioprocess = function (event) {
+        const input = event.inputBuffer.getChannelData(0);
+        const int16Buffer = new Int16Array(input.length);
+        let silent = true;
+
+        for (let i = 0; i < input.length; i++) {
+          int16Buffer[i] = input[i] * 32767;
+          if (Math.abs(input[i]) > 0.01) silent = false;
+        }
+
+        if (silent) {
+          if (!silenceTimer) {
+            silenceTimer = setTimeout(() => {
+              socket.send(new Uint8Array([]));
+              processor.disconnect();
+              source.disconnect();
+              appendChat("🛑 Stopped recording (3s silence)");
+            }, 3000);
+          }
+        } else {
+          if (silenceTimer) {
+            clearTimeout(silenceTimer);
+            silenceTimer = null;
+          }
+          if (socket.readyState === WebSocket.OPEN) {
+            socket.send(int16Buffer.buffer);
+          }
+        }
+      };
+    }
+
+    function stopConversation() {
+      conversationActive = false;
+      startBtn.disabled = false;
+      stopBtn.style.display = "none";
+      appendChat("⏹️ Conversation stopped.");
+    }
+
+    function drawWaveform() {
+      requestAnimationFrame(drawWaveform);
+
+      if (!analyser || !dataArray) return;
+
+      analyser.getByteTimeDomainData(dataArray);
+
+      canvasCtx.fillStyle = "#fff";
+      canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+
+      canvasCtx.lineWidth = 2;
+      canvasCtx.strokeStyle = "#007bff";
+      canvasCtx.beginPath();
+
+      const sliceWidth = canvas.width / bufferLength;
+      let x = 0;
+
+      for (let i = 0; i < bufferLength; i++) {
+        const v = dataArray[i] / 128.0;
+        const y = v * canvas.height / 2;
+        if (i === 0) {
+          canvasCtx.moveTo(x, y);
+        } else {
+          canvasCtx.lineTo(x, y);
+        }
+        x += sliceWidth;
+      }
+
+      canvasCtx.lineTo(canvas.width, canvas.height / 2);
+      canvasCtx.stroke();
+    }
+
+    drawWaveform(); // continuously runs
+
+    startBtn.onclick = startTalking;
+    stopBtn.onclick = stopConversation;
+
+    window.addEventListener("load", async () => {
+      updateMicStatus('awaiting');
+      await getOrRequestStream(); // ask on load
+    });
+
+    const evtSource = new EventSource("/stream");
+    evtSource.onmessage = (event) => {
+      appendChat(event.data);
+    };
+  </script>
+</body>
+</html>

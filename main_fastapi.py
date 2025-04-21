@@ -1,6 +1,9 @@
-from fastapi import FastAPI, BackgroundTasks
+import pdb;
+from fastapi import FastAPI, BackgroundTasks, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
+
 import asyncio
+
 # from asyncio import CancelledError
 from contextlib import asynccontextmanager
 
@@ -20,6 +23,7 @@ from gtts import gTTS
 from langdetect import detect
 from pydub import AudioSegment
 from pydub.playback import play
+import tempfile
 
 # --- Audio settings ---
 RATE = 16000
@@ -27,8 +31,9 @@ CHUNK = 4096
 SILENCE_DURATION = 3  # Stop transcription after 3 seconds of silence
 MODEL_SIZE = "base"
 SILENCE_THRESHOLD = 0.01
+DEFAULT_LANGUANGE = "en"
 
-# # --- Global state ---
+# --- Global state ---
 chat_queue = asyncio.Queue()
 running = False
 shutdown_event = asyncio.Event()
@@ -126,6 +131,33 @@ def live_transcription(sample_rate=RATE, chunk_size=CHUNK):
         stream.close()
         audio_interface.terminate()
 
+import wave
+
+def save_temp_wav(audio_bytes: bytes, sample_rate: int = 16000):
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp_file:
+        with wave.open(tmp_file, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)  # 16-bit = 2 bytes
+            wf.setframerate(sample_rate)
+            wf.writeframes(audio_bytes)
+        return tmp_file.name
+
+
+def live_transcription_from_bytes(audio_bytes: bytes):
+    temp_path = save_temp_wav(audio_bytes)
+    result = stt_model.transcribe(temp_path)
+    os.remove(temp_path)  # Clean up after use
+    return result["text"].strip()
+
+
+def tts_to_bytes(text, lang="en"):
+    # Generate speech in memory (no file saving)
+    tts = gTTS(text=text, lang=lang)
+    audio_fp = io.BytesIO()
+    tts.write_to_fp(audio_fp)
+    audio_fp.seek(0)  # Move to the start of the buffer
+    return audio_fp
+
 
 def speak_response(text):
     # Convert AI text response to Audio. First detects language, then speaks.
@@ -133,14 +165,14 @@ def speak_response(text):
         return
     try:
         # Auto-detect the language
-        lang = detect(text) if len(text.split(" ")) > 2 else "en"
+        lang = detect(text)  # if len(text.split(" ")) > 2 else "en"
+        if lang not in ["en", "it", "fr", "ja"]:
+            print(f"lang detected is {lang}, defaulting to {DEFAULT_LANGUANGE}.")
+            lang = DEFAULT_LANGUANGE
         print(f"Detected language: {lang}")
 
         # Generate speech in memory (no file saving)
-        tts = gTTS(text=text, lang=lang)
-        audio_fp = io.BytesIO()
-        tts.write_to_fp(audio_fp)
-        audio_fp.seek(0)  # Move to the start of the buffer
+        audio_fp = tts_to_bytes(text, lang)
 
         # Convert MP3 to WAV in-memory and play
         audio = AudioSegment.from_file(audio_fp, format="mp3")
@@ -194,8 +226,6 @@ async def start_speaking_loop(background_tasks: BackgroundTasks):
 # This lets the client (browser, app, etc.) receive real-time updates over HTTP.
 # Each message is sent like: data: ...\n\n
 # Compatible with JavaScript EventSource or tools like React.
-
-
 @app.get("/stream")
 async def stream_chat():
     async def event_generator():
@@ -212,3 +242,40 @@ async def stop_loop():
     running = False
     await chat_queue.put("Session stopped manually.")
     return {"status": "Stopped"}
+
+
+# --- WebSocket Audio Endpoint ---
+@app.websocket("/ws/audio")
+async def websocket_audio(websocket: WebSocket):
+    await websocket.accept()
+    try:
+        audio_buffer = bytearray()
+        while True:
+            chunk = await websocket.receive_bytes()
+            audio_buffer.extend(chunk)
+            # Optional: signal from frontend to end
+            if len(chunk) < 1024:
+                break
+
+        audio_bytes = bytes(audio_buffer)
+        if not audio_bytes:
+            await websocket.send_text("No audio received.")
+            return
+
+        transcription_text = live_transcription_from_bytes(audio_bytes)
+        if not transcription_text.strip():
+            await websocket.send_text("Sorry, I didn't catch that.")
+            return
+
+        print(f"User: {transcription_text}")
+        
+        await websocket.send_text(f"User: {transcription_text}")
+
+        llm_response = LLM_chat.send_message(transcription_text).text
+        print(f"AI: {llm_response}")
+        audio_fp = tts_to_bytes(llm_response)  # .get_value()
+        await websocket.send_bytes(audio_fp.read())
+        await websocket.send_text(f"AI: {llm_response}")
+        # await asyncio.to_thread(speak_response, llm_response)  # <-- Add back vocal response
+    except WebSocketDisconnect:
+        print("WebSocket disconnected")
