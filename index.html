@@ -2,19 +2,33 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Tomodatchi Desu</title>
+  <title>Kiminodatchi</title>
   <style>
     body {
       font-family: Arial, sans-serif;
       margin: 30px;
     }
+    /* #chat, #transcript {
+      border: 1.5px solid #ccc;
+      padding: 10px;
+      height: 100px;
+      overflow-y: scroll;
+      margin-bottom: 20px;
+    }     */
     #chat {
-      border: 1px solid #ccc;
+      border: 1.5px solid #ccc;
+      padding: 10px;
+      height: 100px;
+      overflow-y: scroll;
+      margin-bottom: 20px;
+    }
+    #transcript {
+      border: 1.5px solid #ccc;
       padding: 10px;
       height: 300px;
       overflow-y: scroll;
       margin-bottom: 20px;
-    }
+    }    
     button {
       font-size: 18px;
       padding: 10px 20px;
@@ -28,32 +42,40 @@
     .green { color: green; }
     .red { color: red; }
     .gray { color: gray; }
+    canvas {
+      border: 1px solid #ccc;
+      margin-bottom: 20px;
+    }
+    h3 {
+      margin-top: 40px;
+    }
   </style>
 </head>
 <body>
-  <h1>Tomodatchi Desu</h1>
+  <h1>Kiminodatchi</h1>
   <div id="status">
     <span id="micStatus" class="gray">🎤 Awaiting permission...</span>
   </div>
+
   <div id="chat"></div>
-  <canvas id="waveform" width="600" height="100" style="border:1px solid #ccc; margin-bottom: 20px;"></canvas>
+  <canvas id="waveform" width="800" height="50"></canvas>
   <button id="startBtn">🎙️ Start Talking</button>
   <button id="stopBtn" style="display: none;">⏹️ Stop Conversation</button>
+
+  <h3>📝 Chat Transcript</h3>
+  <div id="transcript"></div>
 
   <script>
     const startBtn = document.getElementById("startBtn");
     const stopBtn = document.getElementById("stopBtn");
     const chatDiv = document.getElementById("chat");
     const micStatus = document.getElementById("micStatus");
+    const transcriptDiv = document.getElementById("transcript");
 
     let silenceTimer = null;
     let sharedStream = null;
     let conversationActive = false;
-
-    let analyser, dataArray, bufferLength;
-
-    const canvas = document.getElementById("waveform");
-    const canvasCtx = canvas.getContext("2d");
+    let transcript = [];
 
     function updateMicStatus(state) {
       micStatus.className = '';
@@ -95,6 +117,21 @@
       chatDiv.scrollTop = chatDiv.scrollHeight;
     }
 
+    function appendTranscript(speakerOrText, maybeText) {  
+      let line; 
+  
+      if (maybeText === undefined) {  
+        line = speakerOrText; // just the text  
+      } else {  
+        line = `${speakerOrText}: ${maybeText}`; // "Speaker: text"  
+      }
+      transcript.push(line);
+      const p = document.createElement("p");
+      p.textContent = line;
+      transcriptDiv.appendChild(p);
+      transcriptDiv.scrollTop = transcriptDiv.scrollHeight;
+    }    
+
     async function startTalking() {
       const stream = await getOrRequestStream();
       if (!stream) return;
@@ -113,7 +150,7 @@
           const audioUrl = URL.createObjectURL(audioBlob);
           const audio = new Audio(audioUrl);
           audio.play();
-          appendChat("🟢 AI responded with audio.");
+          appendChat("🟢 System responded with audio.");
           audio.onended = () => {
             if (conversationActive) {
               setTimeout(() => {
@@ -122,7 +159,7 @@
             }
           };
         } else {
-          appendChat(event.data);
+          appendTranscript(event.data); // Save to transcript
         }
       };
 
@@ -139,10 +176,10 @@
 
       const source = audioContext.createMediaStreamSource(stream);
       const processor = audioContext.createScriptProcessor(4096, 1, 1);
-      analyser = audioContext.createAnalyser();
+      const analyser = audioContext.createAnalyser();
       analyser.fftSize = 1024;
-      bufferLength = analyser.frequencyBinCount;
-      dataArray = new Uint8Array(bufferLength);
+      const bufferLength = analyser.frequencyBinCount;
+      const dataArray = new Uint8Array(bufferLength);
 
       source.connect(analyser);
       source.connect(processor);
@@ -164,8 +201,8 @@
               socket.send(new Uint8Array([]));
               processor.disconnect();
               source.disconnect();
-              appendChat("🛑 Stopped recording (3s silence)");
-            }, 3000);
+              appendChat("🛑 Stopped recording (1.5s silence)");
+            }, 1500);
           }
         } else {
           if (silenceTimer) {
@@ -177,6 +214,30 @@
           }
         }
       };
+
+      // 🎵 Waveform Visualizer
+      const canvas = document.getElementById("waveform");
+      const canvasCtx = canvas.getContext("2d");
+      function drawWaveform() {
+        requestAnimationFrame(drawWaveform);
+        analyser.getByteTimeDomainData(dataArray);
+        canvasCtx.fillStyle = "#fff";
+        canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
+        canvasCtx.lineWidth = 2;
+        canvasCtx.strokeStyle = "#007bff";
+        canvasCtx.beginPath();
+        const sliceWidth = canvas.width / bufferLength;
+        let x = 0;
+        for (let i = 0; i < bufferLength; i++) {
+          const v = dataArray[i] / 128.0;
+          const y = v * canvas.height / 2;
+          i === 0 ? canvasCtx.moveTo(x, y) : canvasCtx.lineTo(x, y);
+          x += sliceWidth;
+        }
+        canvasCtx.lineTo(canvas.width, canvas.height / 2);
+        canvasCtx.stroke();
+      }
+      drawWaveform();
     }
 
     function stopConversation() {
@@ -184,41 +245,8 @@
       startBtn.disabled = false;
       stopBtn.style.display = "none";
       appendChat("⏹️ Conversation stopped.");
+      appendTranscript("System", "[Conversation ended]");
     }
-
-    function drawWaveform() {
-      requestAnimationFrame(drawWaveform);
-
-      if (!analyser || !dataArray) return;
-
-      analyser.getByteTimeDomainData(dataArray);
-
-      canvasCtx.fillStyle = "#fff";
-      canvasCtx.fillRect(0, 0, canvas.width, canvas.height);
-
-      canvasCtx.lineWidth = 2;
-      canvasCtx.strokeStyle = "#007bff";
-      canvasCtx.beginPath();
-
-      const sliceWidth = canvas.width / bufferLength;
-      let x = 0;
-
-      for (let i = 0; i < bufferLength; i++) {
-        const v = dataArray[i] / 128.0;
-        const y = v * canvas.height / 2;
-        if (i === 0) {
-          canvasCtx.moveTo(x, y);
-        } else {
-          canvasCtx.lineTo(x, y);
-        }
-        x += sliceWidth;
-      }
-
-      canvasCtx.lineTo(canvas.width, canvas.height / 2);
-      canvasCtx.stroke();
-    }
-
-    drawWaveform(); // continuously runs
 
     startBtn.onclick = startTalking;
     stopBtn.onclick = stopConversation;
@@ -228,9 +256,10 @@
       await getOrRequestStream(); // ask on load
     });
 
+    // Optional: stream server messages via SSE
     const evtSource = new EventSource("/stream");
     evtSource.onmessage = (event) => {
-      appendChat(event.data);
+      appendTranscript(event.data);
     };
   </script>
 </body>

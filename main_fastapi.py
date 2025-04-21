@@ -25,6 +25,9 @@ from pydub import AudioSegment
 from pydub.playback import play
 import tempfile
 
+SYSTEM_NAME = "Kiminodatchi"
+USERNAME = "You"
+
 # --- Audio settings ---
 RATE = 16000
 CHUNK = 4096
@@ -32,7 +35,7 @@ SILENCE_DURATION = 3  # Stop transcription after 3 seconds of silence
 MODEL_SIZE = "base"
 SILENCE_THRESHOLD = 0.01
 DEFAULT_LANGUANGE = "en"
-
+SUPPORTED_LANGUAGES = ["en", "it", "fr", "ja", "zh-cn"]
 # --- Global state ---
 chat_queue = asyncio.Queue()
 running = False
@@ -168,7 +171,7 @@ def speak_response(text):
     try:
         # Auto-detect the language
         lang = detect(text)  # if len(text.split(" ")) > 2 else "en"
-        if lang not in ["en", "it", "fr", "ja"]:
+        if lang not in SUPPORTED_LANGUAGES:
             print(f"lang detected is {lang}, defaulting to {DEFAULT_LANGUANGE}.")
             lang = DEFAULT_LANGUANGE
         print(f"Detected language: {lang}")
@@ -195,12 +198,12 @@ async def speak_to_ai():
 
             # Ensure that the transcription text is not empty before sending it to the LLM
             if transcription_text and transcription_text != "INTERRUPT":
-                print(f"User: {transcription_text}")
+                print(f"{USERNAME}: {transcription_text}")
                 llm_response = LLM_chat.send_message(transcription_text).text
-                print("AI:", llm_response)
+                print(f"{SYSTEM_NAME}:", llm_response)
                 await asyncio.to_thread(speak_response, llm_response)
-                await chat_queue.put(f"User: {transcription_text}")
-                await chat_queue.put(f"AI: {llm_response}")
+                await chat_queue.put(f"{USERNAME}: {transcription_text}")
+                await chat_queue.put(f"{SYSTEM_NAME}: {llm_response}")
             elif transcription_text == "INTERRUPT":
                 await chat_queue.put("Session ended by user.")
                 break
@@ -269,15 +272,15 @@ async def websocket_audio(websocket: WebSocket):
             await websocket.send_text("Sorry, I didn't catch that.")
             return
 
-        print(f"User: {transcription_text}")
+        print(f"{USERNAME}: {transcription_text}")
 
-        await websocket.send_text(f"User: {transcription_text}")
+        await websocket.send_text(f"{USERNAME}: {transcription_text}")
 
         llm_response = LLM_chat.send_message(transcription_text).text
-        print(f"AI: {llm_response}")
+        print(f"{SYSTEM_NAME}: {llm_response}")
         audio_fp = tts_to_bytes(llm_response)  # .get_value()
         await websocket.send_bytes(audio_fp.read())
-        await websocket.send_text(f"AI: {llm_response}")
+        await websocket.send_text(f"{SYSTEM_NAME}: {llm_response}")
         # await asyncio.to_thread(speak_response, llm_response)  # <-- Add back vocal response
     except WebSocketDisconnect:
         print("WebSocket disconnected")

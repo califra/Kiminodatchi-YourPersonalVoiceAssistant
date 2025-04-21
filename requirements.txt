@@ -1,7 +1,6 @@
 fastapi
-uvicorn[standard]
-websockets
-google-generativeai
+uvicorn
+google-genai
 noisereduce
 numpy
 pyaudio
