@@ -25,6 +25,9 @@ This project helped me better understand the full-stack pipeline connecting audi
 ---
 
 ## 📦 System Dependencies
+This document outlines the steps to get Kiminodatchi up and running.  Navigate to the bottom if you want to use a Dockerized version.
+
+Otherwise:
 
 Make sure the following are installed on your system:
 
@@ -64,7 +67,7 @@ GEMINI_API_KEY=your_gemini_api_key_here
 
 ---
 
-## 🖥️ Run via Terminal
+## 🖥️ Interact via Terminal
 
 ```bash
 source .venv/bin/activate
@@ -73,7 +76,7 @@ python main.py
 
 ---
 
-## 🌐 Run via Web Browser
+## 🌐 Interact via Web Browser
 
 Start the FastAPI backend:
 
@@ -114,8 +117,38 @@ Then open `index.html` in your browser (tested with Safari and Chrome).
 
 ---
 
+## 🐳 Alternative: Run with Docker
+
+This method allows you to run Kiminodatchi in a self-contained Docker environment, ensuring consistency across different systems. You have two options: building the image yourself or using a pre-built image.
+
+**Option 1: Build the Docker Image (Recommended for Local Development)**
+
+1.  Navigate to the project directory containing the `Dockerfile`.
+
+2.  Build the Docker image: This command will create a Docker image named `kiminodatchi-app` based on the instructions in the `Dockerfile`.
+
+    ```bash
+    docker build -t kiminodatchi-app .
+    ```
+
+**Option 2: Use the Pre-built Docker Image (Quick Start)**
+
+1.  Pull the pre-built image: If you prefer a faster setup, you can download a pre-built image from Docker Hub.
+
+    ```bash
+    docker pull fcaliva/kiminodatchi-app:v0
+    ```
+
+**Running the Docker Container:**
+
+Once you have either built the image or pulled the pre-built one, you can launch the Kiminodatchi application in a Docker container:
+
+   ```bash
+   docker run --env-file .env -p 8000:8000 kiminodatchi-app
+   ```
+
 ## 🚧 TODOs
 
+- [x] Docker packaging  
 - [ ] Multi-turn memory  
-- [ ] Docker packaging  
 - [ ] Kubernetes deployment  
